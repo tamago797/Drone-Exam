@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>動態解析 - 遙控無人機模擬測驗系統</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --secondary: #34495e;
+            --accent: #3498db;
+            --success: #27ae60;
+            --danger: #e74c3c;
+            --bg: #f8f9fa;
+        }
+        body { font-family: "Microsoft JhengHei", sans-serif; background: var(--bg); color: #333; margin: 0; padding: 20px; line-height: 1.6; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h1 { text-align: center; color: var(--primary); border-bottom: 3px solid var(--accent); padding-bottom: 10px; }
+        
+        /* 步驟一：資料載入區 */
+        .setup-area { background: #ecf0f1; padding: 20px; border-radius: 8px; margin-bottom: 25px; }
+        .setup-area h3 { margin-top: 0; color: var(--primary); }
+        textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 5px; resize: vertical; box-sizing: border-box; font-family: inherit;}
+        .file-upload { margin: 10px 0; padding: 10px; background: white; border-radius: 5px; border: 1px dashed #95a5a6;}
+        
+        /* 測驗區 */
+        #quiz-area { display: none; }
+        .question-card { margin-bottom: 25px; padding: 20px; border: 1px solid #e1e8ed; border-radius: 8px; transition: 0.3s; background: white;}
+        .question-card:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(52, 152, 219, 0.1); }
+        .q-text { font-weight: bold; font-size: 1.1em; margin-bottom: 15px; color: var(--primary); }
+        .options { display: flex; flex-direction: column; gap: 8px; }
+        .opt-label { padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; cursor: pointer; display: flex; align-items: center; transition: 0.2s;}
+        .opt-label:hover { background: #eef7ff; border-color: var(--accent); }
+        .opt-label input { margin-right: 12px; transform: scale(1.2); cursor: pointer; }
+        
+        /* 按鈕與結果 */
+        .btn { display: block; width: 100%; padding: 15px; font-size: 1.2em; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: white; transition: 0.3s; margin-top: 20px;}
+        .btn-start { background-color: var(--primary); }
+        .btn-start:hover { background-color: var(--secondary); }
+        .btn-submit { background-color: var(--accent); }
+        .btn-submit:hover { background-color: #2980b9; }
+        .btn-retry { background-color: var(--success); display: none; }
+        
+        #result-box { margin-top: 20px; padding: 20px; text-align: center; font-size: 1.2em; border-radius: 5px; display: none; background: #e8f8f5; border: 2px solid var(--success); }
+        .score { font-size: 2.5em; font-weight: bold; color: var(--primary); margin: 10px 0;}
+        .correct-bg { background-color: #d4edda !important; border-color: #c3e6cb !important; }
+        .wrong-bg { background-color: #f8d7da !important; border-color: #f5c6cb !important; }
+        .status-msg { text-align: center; color: var(--accent); font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>遙控無人機學科 - 動態引擎測驗</h1>
+    
+    <div class="setup-area" id="setup-area">
+        <h3>步驟 1：匯入題庫資料</h3>
+        <p style="font-size: 0.9em; color: #7f8c8d;">程式會自動在文中尋找問題與最後方的答案區進行配對。</p>
+        
+        <div class="file-upload">
+            <label for="fileInput"><b>選項 A：上傳 PDF 或 TXT 檔</b></label><br>
+            <input type="file" id="fileInput" accept=".txt, .pdf" onchange="handleFileUpload(event)">
+            <div id="loading-msg" class="status-msg"></div>
+        </div>
+
+        <p style="text-align: center; margin: 5px 0;">或</p>
+
+        <label for="rawText"><b>選項 B：直接貼上題庫全文</b></label>
+        <textarea id="rawText" placeholder="請將包含題目與最後「答案區」的全文貼在這裡..."></textarea>
+        
+        <button class="btn btn-start" onclick="generateQuiz()">解析題庫並抽出 40 題</button>
+    </div>
+
+    <div id="quiz-area">
+        <div style="text-align: center; color: #7f8c8d; margin-bottom: 20px;">選項已隨機洗牌，正確答案已動態綁定</div>
+        <form id="quizForm">
+            <div id="questions-container"></div>
+            <button type="button" class="btn btn-submit" id="submitBtn" onclick="gradeQuiz()">交卷計算成績</button>
+        </form>
+        
+        <div id="result-box">
+            <h2>測驗完成</h2>
+            <div class="score" id="score-text">0 分</div>
+            <div id="score-detail"></div>
+        </div>
+        <button type="button" class="btn btn-retry" id="retryBtn" onclick="resetToSetup()">重新產生新考卷</button>
+    </div>
+</div>
+
+<script>
+    // 設定 PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+    let currentExamQuestions = [];
+
+    // 處理檔案上傳 (支援 TXT 與 PDF)
+    async function handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const msgBox = document.getElementById('loading-msg');
+        msgBox.innerText = "讀取檔案中，請稍候...";
+
+        if (file.type === "text/plain") {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('rawText').value = e.target.result;
+                msgBox.innerText = "TXT 讀取成功！請點擊下方按鈕產生考卷。";
+            };
+            reader.readAsText(file);
+        } else if (file.type === "application/pdf") {
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                let fullText = "";
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const content = await page.getTextContent();
+                    const strings = content.items.map(item => item.str);
+                    fullText += strings.join(" ") + "\n";
+                }
+                document.getElementById('rawText').value = fullText;
+                msgBox.innerText = "PDF 解析成功！請點擊下方按鈕產生考卷。";
+            } catch (error) {
+                msgBox.innerText = "PDF 解析失敗，請直接複製文字貼上。";
+                console.error(error);
+            }
+        } else {
+            msgBox.innerText = "不支援的檔案格式。";
+        }
+    }
+
+    // 洗牌演算法
+    function shuffle(array) {
+        let currentIndex = array.length, randomIndex;
+        while (currentIndex !== 0) {
+            randomIndex = Math.floor(Math.random() * currentIndex);
+            currentIndex--;
+            [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+        }
+        return array;
+    }
+
+    // 核心解析引擎：從非結構化文本中萃取題目與答案
+    function parseSourceText(text) {
+        // 清理特殊字元與多餘空白，讓正規表達式更好抓
+        let cleanText = text.replace(/\r/g, '').replace(/\n/g, ' ');
+
+        // 1. 抓取所有答案
+        // 匹配格式: 1. A  或  1.A  或  1. A
+        const ansPattern = /(?:^|\s)(\d+)\.\s*([A-D])/g;
+        let match;
+        let answersData = []; // [chapterIndex][questionNumber] = "A"
+        let currentAnsChapter = -1;
+        let lastAnsNum = 9999;
+
+        while ((match = ansPattern.exec(cleanText)) !== null) {
+            let num = parseInt(match[1]);
+            let ans = match[2].trim();
+            // 如果題號變小或等於1，代表進入了「下一章」的答案區
+            if (num <= lastAnsNum) {
+                currentAnsChapter++;
+                answersData[currentAnsChapter] = {};
+            }
+            answersData[currentAnsChapter][num] = ans;
+            lastAnsNum = num;
+        }
+
+        // 2. 抓取所有題目 (利用 (A)...(B)...(C)...(D) 作為定位點)
+        // 為了避免跨題抓取，我們抓出所有含 ABCD 的區塊
+        const qPattern = /(?:^|\s)(\d+)\.\s+([\s\S]*?)\(A\)([\s\S]*?)\(B\)([\s\S]*?)\(C\)([\s\S]*?)\(D\)([\s\S]*?)(?=(?:\s\d+\.\s+[\s\S]*?\(A\))|(?:\s\d+\.\s*[A-D]\s)|$)/g;
+        
+        let rawQuestions = [];
+        let currentQChapter = -1;
+        let lastQNum = 9999;
+
+        while ((match = qPattern.exec(cleanText)) !== null) {
+            let num = parseInt(match[1]);
+            
+            // 題號歸零代表進入新章節
+            if (num <= lastQNum) {
+                currentQChapter++;
+            }
+            lastQNum = num;
+
+            // 萃取題目與選項，清除多餘空白
+            let qText = match[2].trim();
+            let optA = match[3].replace(/\s+/g, ' ').trim();
+            let optB = match[4].replace(/\s+/g, ' ').trim();
+            let optC = match[5].replace(/\s+/g, ' ').trim();
+            let optD = match[6].replace(/\s+/g, ' ').trim();
+
+            rawQuestions.push({
+                chapter: currentQChapter,
+                num: num,
+                text: qText,
+                options: [
+                    { label: 'A', text: optA },
+                    { label: 'B', text: optB },
+                    { label: 'C', text: optC },
+                    { label: 'D', text: optD }
+                ]
+            });
+        }
+
+        // 3. 將題目與答案進行配對
+        let validQuestions = [];
+        rawQuestions.forEach(q => {
+            // 嘗試在對應章節尋找答案
+            let correctLabel = null;
+            if (answersData[q.chapter] && answersData[q.chapter][q.num]) {
+                correctLabel = answersData[q.chapter][q.num];
+            } else if (answersData[0] && answersData[0][q.num]) {
+                // 防呆：如果章節判斷誤差，全部去第一組答案找
+                correctLabel = answersData[0][q.num];
+            }
+
+            if (correctLabel) {
+                // 將正確解答的布林值綁定到對應的物件上
+                q.options.forEach(opt => {
+                    opt.isCorrect = (opt.label === correctLabel);
+                });
+                validQuestions.push(q);
+            }
+        });
+
+        return validQuestions;
+    }
+
+    // 產生考卷
+    function generateQuiz() {
+        const rawText = document.getElementById('rawText').value;
+        if (!rawText || rawText.trim() === '') {
+            alert("請先貼上題庫文字或上傳檔案！");
+            return;
+        }
+
+        const validQuestions = parseSourceText(rawText);
+        
+        if (validQuestions.length < 40) {
+            alert(`解析結果異常！僅成功辨識出 ${validQuestions.length} 題與答案。請確認貼上的內容是否包含題目區與最後的「答案區」。`);
+            return;
+        }
+
+        // 隨機抽出 40 題
+        currentExamQuestions = shuffle(validQuestions).slice(0, 40);
+
+        renderExam();
+        
+        // 切換畫面
+        document.getElementById('setup-area').style.display = 'none';
+        document.getElementById('quiz-area').style.display = 'block';
+        document.getElementById('result-box').style.display = 'none';
+        document.getElementById('submitBtn').style.display = 'block';
+        document.getElementById('retryBtn').style.display = 'none';
+        window.scrollTo(0, 0);
+    }
+
+    // 渲染題目到畫面上
+    function renderExam() {
+        const container = document.getElementById('questions-container');
+        container.innerHTML = '';
+
+        currentExamQuestions.forEach((q, index) => {
+            // ★ 核心需求：選項的 ABCD 位置改變時，正確答案也要跟著改變
+            // 我們對該題的 options 陣列進行洗牌
+            q.shuffledOptions = shuffle([...q.options]);
+
+            let card = document.createElement('div');
+            card.className = 'question-card';
+            
+            let html = `<div class="q-text">${index + 1}. ${q.text}</div>`;
+            html += `<div class="options">`;
+            
+            // 重新賦予畫面上的 A, B, C, D 標籤，但 value 依然鎖定原先的 isCorrect
+            const displayLabels = ['A', 'B', 'C', 'D'];
+            q.shuffledOptions.forEach((opt, oIndex) => {
+                html += `
+                    <label class="opt-label" id="label-q${index}-o${oIndex}">
+                        <input type="radio" name="q${index}" value="${opt.isCorrect}">
+                        <span>(${displayLabels[oIndex]}) ${opt.text}</span>
+                    </label>
+                `;
+            });
+            html += `</div>`;
+            card.innerHTML = html;
+            container.appendChild(card);
+        });
+    }
+
+    // 計算成績
+    function gradeQuiz() {
+        let score = 0;
+        let unanswered = 0;
+        const total = currentExamQuestions.length;
+
+        // 檢查未填寫
+        for (let i = 0; i < total; i++) {
+            if (!document.querySelector(`input[name="q${i}"]:checked`)) unanswered++;
+        }
+
+        if (unanswered > 0) {
+            if (!confirm(`您還有 ${unanswered} 題未作答，確定要交卷嗎？`)) return;
+        }
+
+        // 批改
+        for (let i = 0; i < total; i++) {
+            const inputs = document.querySelectorAll(`input[name="q${i}"]`);
+            
+            inputs.forEach((input, oIndex) => {
+                let label = document.getElementById(`label-q${i}-o${oIndex}`);
+                input.disabled = true; // 鎖定修改
+
+                // 系統標示出正確答案 (綠底)
+                if (input.value === "true") {
+                    label.classList.add("correct-bg");
+                }
+
+                // 檢查使用者的選擇
+                if (input.checked) {
+                    if (input.value === "true") {
+                        score++;
+                    } else {
+                        // 答錯標示紅底
+                        label.classList.add("wrong-bg");
+                    }
+                }
+            });
+        }
+
+        let finalScore = Math.round((score / total) * 100);
+        
+        // 顯示結果
+        document.getElementById('submitBtn').style.display = 'none';
+        document.getElementById('result-box').style.display = 'block';
+        document.getElementById('retryBtn').style.display = 'block';
+        
+        let scoreText = document.getElementById('score-text');
+        scoreText.innerText = `${finalScore} 分`;
+        scoreText.style.color = finalScore >= 80 ? "var(--success)" : "var(--danger)";
+        
+        document.getElementById('score-detail').innerText = `共 40 題，您答對了 ${score} 題。 (80分及格)`;
+        
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+
+    // 重新回到初始設定畫面
+    function resetToSetup() {
+        document.getElementById('setup-area').style.display = 'block';
+        document.getElementById('quiz-area').style.display = 'none';
+        window.scrollTo(0, 0);
+    }
+</script>
+
+</body>
+</html>
